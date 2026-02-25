@@ -1,4 +1,4 @@
-﻿# UnityCleaner v2.0
+﻿# UnityCleaner v2.0.1
 
 UnityCleaner is a simple and efficient automation tool designed to optimize Unity project sizes by removing unnecessary files and folders while preserving core project data.
 
@@ -162,7 +162,7 @@ Distributed under the MIT License. See `LICENSE` for more information.
 
 ## Changelog
 
-### v2.1
+### v2.0.1
 - **Fixed macOS app bundle crash on startup**
 - **Smart log file location**: Logs now save to platform-appropriate directories
   - macOS: `~/Library/Logs/UnityCleaner/`
