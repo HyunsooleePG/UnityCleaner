@@ -145,7 +145,12 @@ pyinstaller UnityCleaner.spec
 ## Troubleshooting
 
 ### Check the Log File
-If you encounter issues, check `unitycleaner.log` in the application directory for detailed information about what happened.
+If you encounter issues, check the log file for detailed information about what happened.
+
+**Log file locations:**
+- **Windows**: `%APPDATA%\UnityCleaner\unitycleaner.log`
+- **macOS**: `~/Library/Logs/UnityCleaner/unitycleaner.log`
+- **Running from source**: `unitycleaner.log` in the current directory
 
 ### Common Issues
 - **Permission Denied**: Some files may be locked by other applications. Close Unity and any IDEs before cleaning.
@@ -157,7 +162,20 @@ Distributed under the MIT License. See `LICENSE` for more information.
 
 ## Changelog
 
-### v2.0 (2026-02-25)
+### v2.1
+- **Fixed macOS app bundle crash on startup**
+- **Smart log file location**: Logs now save to platform-appropriate directories
+  - macOS: `~/Library/Logs/UnityCleaner/`
+  - Windows: `%APPDATA%\UnityCleaner\`
+- **Improved macOS compatibility**:
+  - Added argv_emulation for better macOS integration
+  - Added bundle identifier and info.plist configuration
+  - Fixed file permission issues in app bundle
+  - Window automatically appears in front on macOS
+- **Enhanced error handling**: Better startup error reporting with fallback console logging
+- **Added platform detection logging**: Better diagnostics for troubleshooting
+
+### v2.0
 - Separated business logic from UI (CleanupEngine class)
 - Added comprehensive logging system
 - Implemented size tracking and display (MB/GB)

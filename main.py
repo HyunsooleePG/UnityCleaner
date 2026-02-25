@@ -1,4 +1,5 @@
 import os
+import sys
 import shutil
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
@@ -8,6 +9,8 @@ import logging
 from typing import List, Set, Optional
 from dataclasses import dataclass
 import time
+from pathlib import Path
+import subprocess
 
 
 # ============================================================================
@@ -115,9 +118,9 @@ class Constants:
     STATUS_LABEL_WIDTH = 450
     LISTBOX_HEIGHT = 4
 
-    # File settings
-    LOG_FILE = "unitycleaner.log"
-    CONFIG_FILE = "config.json"
+    # File settings (will be set dynamically based on platform)
+    LOG_FILE = None
+    CONFIG_FILE = None
 
     # System dangerous paths to protect
     DANGEROUS_PATHS_WINDOWS = ['C:\\Windows', 'C:\\Program Files', 'C:\\Program Files (x86)', 'C:\\System32']
@@ -159,6 +162,48 @@ class CleanupSummary:
 
 
 # ============================================================================
+# Utility Functions
+# ============================================================================
+def get_writable_path(filename: str) -> str:
+    """
+    Get a writable path for log and config files.
+
+    On macOS app bundles, we can't write to the app directory,
+    so we use the user's home directory or temp directory.
+
+    Args:
+        filename: Name of the file
+
+    Returns:
+        Full path to writable location
+    """
+    # Check if running as a PyInstaller bundle
+    if getattr(sys, 'frozen', False):
+        # Running as compiled app
+        if sys.platform == 'darwin':
+            # macOS: use user's Library/Logs directory
+            log_dir = Path.home() / 'Library' / 'Logs' / 'UnityCleaner'
+            log_dir.mkdir(parents=True, exist_ok=True)
+            return str(log_dir / filename)
+        elif sys.platform == 'win32':
+            # Windows: use %APPDATA%
+            app_data = os.environ.get('APPDATA')
+            if app_data:
+                log_dir = Path(app_data) / 'UnityCleaner'
+                log_dir.mkdir(parents=True, exist_ok=True)
+                return str(log_dir / filename)
+
+    # Running as script or fallback: use current directory
+    return filename
+
+
+def initialize_constants():
+    """Initialize platform-specific constants"""
+    Constants.LOG_FILE = get_writable_path("unitycleaner.log")
+    Constants.CONFIG_FILE = get_writable_path("config.json")
+
+
+# ============================================================================
 # Logging Setup
 # ============================================================================
 def setup_logging() -> logging.Logger:
@@ -166,20 +211,30 @@ def setup_logging() -> logging.Logger:
     logger = logging.getLogger('UnityCleaner')
     logger.setLevel(logging.INFO)
 
-    # File handler
-    file_handler = logging.FileHandler(Constants.LOG_FILE, encoding='utf-8')
-    file_handler.setLevel(logging.INFO)
+    try:
+        # File handler
+        file_handler = logging.FileHandler(Constants.LOG_FILE, encoding='utf-8')
+        file_handler.setLevel(logging.INFO)
 
-    # Formatter
-    formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-    file_handler.setFormatter(formatter)
+        # Formatter
+        formatter = logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+        file_handler.setFormatter(formatter)
 
-    # Add handler
-    if not logger.handlers:
-        logger.addHandler(file_handler)
+        # Add handler
+        if not logger.handlers:
+            logger.addHandler(file_handler)
+    except Exception as e:
+        # If file logging fails, at least set up console logging
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.INFO)
+        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+        console_handler.setFormatter(formatter)
+        if not logger.handlers:
+            logger.addHandler(console_handler)
+        logger.warning(f"Failed to setup file logging: {e}")
 
     return logger
 
@@ -456,6 +511,10 @@ class UnityCleanerApp:
         self.logger = setup_logging()
         self.logger.info("=" * 60)
         self.logger.info("UnityCleaner started")
+        self.logger.info(f"Platform: {sys.platform}")
+        self.logger.info(f"Python: {sys.version}")
+        self.logger.info(f"Frozen: {getattr(sys, 'frozen', False)}")
+        self.logger.info(f"Log file: {Constants.LOG_FILE}")
 
         # Cancellation event handler
         self.stop_event = threading.Event()
@@ -474,14 +533,58 @@ class UnityCleanerApp:
         # Handling window closing event
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
+    def _is_dark_mode(self) -> bool:
+        """Detect if macOS is in dark mode"""
+        if sys.platform != 'darwin':
+            return False
+
+        try:
+            # Try to detect macOS dark mode using subprocess
+            result = subprocess.run(
+                ['defaults', 'read', '-g', 'AppleInterfaceStyle'],
+                capture_output=True,
+                text=True,
+                timeout=1
+            )
+            return result.stdout.strip().lower() == 'dark'
+        except:
+            return False
+
     def _build_ui(self) -> None:
         """Build the user interface"""
+        # Detect dark mode on macOS
+        self.is_dark_mode = self._is_dark_mode()
+
+        # Set color scheme based on mode
+        if self.is_dark_mode:
+            self.bg_color = '#2b2b2b'
+            self.fg_color = '#ffffff'
+            self.label_fg = '#e0e0e0'
+            self.status_waiting = '#00bfff'  # Bright cyan
+            self.status_error = '#ff6b6b'    # Bright red
+            self.status_success = '#51cf66'  # Bright green
+            self.status_warning = '#ffa94d'  # Bright orange
+        else:
+            self.bg_color = None
+            self.fg_color = 'black'
+            self.label_fg = 'black'
+            self.status_waiting = 'blue'
+            self.status_error = 'red'
+            self.status_success = 'green'
+            self.status_warning = 'orange'
+
+        # Configure root window
+        if self.bg_color:
+            self.root.configure(bg=self.bg_color)
+
         # Info label
         self.label_info = tk.Label(
             self.root,
             text="Select operation mode and folder.",
             pady=10,
-            font=('Arial', 10)
+            font=('Arial', 10),
+            fg=self.label_fg,
+            bg=self.bg_color
         )
         self.label_info.pack()
 
@@ -492,7 +595,9 @@ class UnityCleanerApp:
             text="Operation Mode",
             padx=10,
             pady=5,
-            font=('Arial', 9, 'bold')
+            font=('Arial', 9, 'bold'),
+            fg=self.label_fg,
+            bg=self.bg_color
         )
         self.radio_frame.pack(pady=5, padx=20, fill="x")
 
@@ -501,7 +606,10 @@ class UnityCleanerApp:
             text="Clean Single Project",
             variable=self.mode_var,
             value="single",
-            font=('Arial', 9)
+            font=('Arial', 9),
+            fg=self.fg_color,
+            bg=self.bg_color,
+            selectcolor=self.bg_color if self.bg_color else 'white'
         ).pack(anchor="w")
 
         tk.Radiobutton(
@@ -509,7 +617,10 @@ class UnityCleanerApp:
             text="Clean All Projects in Subfolders",
             variable=self.mode_var,
             value="recursive",
-            font=('Arial', 9)
+            font=('Arial', 9),
+            fg=self.fg_color,
+            bg=self.bg_color,
+            selectcolor=self.bg_color if self.bg_color else 'white'
         ).pack(anchor="w")
 
         # Exclude folders management UI
@@ -518,28 +629,37 @@ class UnityCleanerApp:
             text="Additional Exclusions (Folders)",
             padx=10,
             pady=5,
-            font=('Arial', 9, 'bold')
+            font=('Arial', 9, 'bold'),
+            fg=self.label_fg,
+            bg=self.bg_color
         )
         self.exclude_frame.pack(pady=5, fill="x", padx=20)
 
-        self.exclude_btn_frame = tk.Frame(self.exclude_frame)
+        self.exclude_btn_frame = tk.Frame(self.exclude_frame, bg=self.bg_color)
         self.exclude_btn_frame.pack(fill="x")
 
         self.btn_add_folder = tk.Button(
             self.exclude_btn_frame,
             text="Add Folders",
             command=self.add_exclude_folder,
-            font=('Arial', 9)
+            font=('Arial', 9),
+            fg='black'
         )
         self.btn_add_folder.pack(side=tk.LEFT, expand=True, fill="x", padx=2)
 
-        self.exclude_listbox_frame = tk.Frame(self.exclude_frame)
+        self.exclude_listbox_frame = tk.Frame(self.exclude_frame, bg=self.bg_color)
         self.exclude_listbox_frame.pack(fill="both", expand=True, pady=5)
+
+        # Listbox colors for better visibility
+        listbox_bg = '#1e1e1e' if self.is_dark_mode else 'white'
+        listbox_fg = '#ffffff' if self.is_dark_mode else 'black'
 
         self.exclude_listbox = tk.Listbox(
             self.exclude_listbox_frame,
             height=Constants.LISTBOX_HEIGHT,
-            font=('Arial', 8)
+            font=('Arial', 8),
+            bg=listbox_bg,
+            fg=listbox_fg
         )
         self.exclude_listbox.pack(side=tk.LEFT, fill="both", expand=True)
 
@@ -553,12 +673,13 @@ class UnityCleanerApp:
             self.exclude_frame,
             text="Remove Selected",
             command=self.remove_exclude,
-            font=('Arial', 9)
+            font=('Arial', 9),
+            fg='black'
         )
         self.btn_remove_exclude.pack(anchor="e")
 
         # Progress bar
-        self.progress_frame = tk.Frame(self.root)
+        self.progress_frame = tk.Frame(self.root, bg=self.bg_color)
         self.progress_frame.pack(pady=5, padx=20, fill="x")
 
         self.progress = ttk.Progressbar(
@@ -571,7 +692,9 @@ class UnityCleanerApp:
         self.progress_label = tk.Label(
             self.progress_frame,
             text="0%",
-            font=('Arial', 8)
+            font=('Arial', 8),
+            fg=self.label_fg,
+            bg=self.bg_color
         )
         self.progress_label.pack()
 
@@ -579,25 +702,28 @@ class UnityCleanerApp:
         self.status_label = tk.Label(
             self.root,
             text="Waiting...",
-            fg="blue",
+            fg=self.status_waiting,
             wraplength=Constants.STATUS_LABEL_WIDTH,
-            font=('Arial', 9),
-            justify=tk.LEFT
+            font=('Arial', 9, 'bold'),
+            justify=tk.LEFT,
+            bg=self.bg_color
         )
         self.status_label.pack(pady=5)
 
         # Detailed stats label
+        stats_fg = '#b0b0b0' if self.is_dark_mode else 'gray'
         self.stats_label = tk.Label(
             self.root,
             text="",
-            fg="gray",
+            fg=stats_fg,
             font=('Arial', 8),
-            justify=tk.LEFT
+            justify=tk.LEFT,
+            bg=self.bg_color
         )
         self.stats_label.pack(pady=2)
 
         # Button frame
-        self.button_frame = tk.Frame(self.root)
+        self.button_frame = tk.Frame(self.root, bg=self.bg_color)
         self.button_frame.pack(pady=10)
 
         self.btn_select = tk.Button(
@@ -608,7 +734,7 @@ class UnityCleanerApp:
             height=2,
             font=('Arial', 10, 'bold'),
             bg='#4CAF50',
-            fg='white'
+            fg='black'
         )
         self.btn_select.pack(side=tk.LEFT, padx=5)
 
@@ -621,7 +747,7 @@ class UnityCleanerApp:
             height=2,
             font=('Arial', 10, 'bold'),
             bg='#f44336',
-            fg='white'
+            fg='black'
         )
         self.btn_stop.pack(side=tk.LEFT, padx=5)
 
@@ -631,9 +757,19 @@ class UnityCleanerApp:
 
         Args:
             text: Status text to display
-            color: Text color
+            color: Text color (will be adjusted for dark mode)
         """
-        self.status_label.config(text=text, fg=color)
+        # Map color names to theme-aware colors
+        color_map = {
+            "black": self.fg_color,
+            "blue": self.status_waiting,
+            "red": self.status_error,
+            "green": self.status_success,
+            "orange": self.status_warning
+        }
+
+        final_color = color_map.get(color, color)
+        self.status_label.config(text=text, fg=final_color)
         self.root.update_idletasks()
 
     def set_stats(self, text: str) -> None:
@@ -947,7 +1083,44 @@ class UnityCleanerApp:
 # ============================================================================
 # Main Entry Point
 # ============================================================================
+def main():
+    """Main entry point with error handling"""
+    try:
+        # Initialize platform-specific paths
+        initialize_constants()
+
+        # Create root window
+        root = tk.Tk()
+
+        # macOS specific: bring app to front
+        if sys.platform == 'darwin':
+            try:
+                root.lift()
+                root.call('wm', 'attributes', '.', '-topmost', True)
+                root.after_idle(root.call, 'wm', 'attributes', '.', '-topmost', False)
+            except:
+                pass  # Ignore if this fails
+
+        # Create app
+        app = UnityCleanerApp(root)
+
+        # Run main loop
+        root.mainloop()
+
+    except Exception as e:
+        # Show error dialog if possible
+        error_msg = f"Fatal error on startup:\n{type(e).__name__}: {str(e)}"
+        print(error_msg, file=sys.stderr)
+
+        try:
+            import traceback
+            traceback.print_exc()
+            messagebox.showerror("Fatal Error", error_msg)
+        except:
+            pass
+
+        sys.exit(1)
+
+
 if __name__ == "__main__":
-    root = tk.Tk()
-    app = UnityCleanerApp(root)
-    root.mainloop()
+    main()
